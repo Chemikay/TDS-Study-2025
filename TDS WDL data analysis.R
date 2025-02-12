@@ -48,7 +48,7 @@ str(dset2_tds)
 
 dset2_tds_qc <- mutate(dset2_tds, qc_category = case_when(lab_dup == "Y"~"lab_dup",
                        grepl("Blank", sample_type)~"field_blank",
-                       grepl("Replicate", sample_type) | grepl("Duplicate", sample_type)~"field_dup",
+                       grepl("Replicate", sample_type) | grepl("Duplicate", sample_type) & lab_dup !="Y"~"field_dup",
                        TRUE~"normal"))
 
 count(dset2_tds_qc, qc_category)
@@ -64,10 +64,11 @@ count(dset2_tds_qc, qc_category)
 dset3 <- filter(dset2_tds_qc, qc_category == "normal")
 #remaining normal TDS samples: 1386
 
-#pull back in other analytes of interest to parse out qc samples
+#pull back in other analytes of interest to parse out qc samples, need to account for lab dups that are done on a field duplicate
+#this doesn't properly account for field dups which serve as parent for lab dup RPD so need to account for that later
 dset2_qc <- mutate(dset2, qc_category = case_when(lab_dup == "Y"~"lab_dup",
                                                      grepl("Blank", sample_type)~"field_blank",
-                                                     grepl("Replicate", sample_type) | grepl("Duplicate", sample_type)~"field_dup",
+                                                     grepl("Replicate", sample_type) | grepl("Duplicate", sample_type) & lab_dup !="Y"~"field_dup",
                                                      TRUE~"normal"))
 
 #remove all qc samples 
@@ -83,7 +84,7 @@ r = dset3 %>%
 #separately, will choose first value. Spot checking the Field SC duplicates, there is a different status assigned but values are the same. Also choosing first value
 
 
-#pivot wider to group by sample ID, pick first instance of sample ID present which will remove lab dup values (for now)
+#pivot wider to group by sample ID, pick first instance of sample ID present to remove these 34 dup values
 dset3_wide <- dset3 %>% 
   pivot_wider(id_cols = c(sample_code, collection_date, data_owner, station_number),
               names_from = analyte, values_from = result,
@@ -140,16 +141,18 @@ summary(dset4_wide$total_dissolved_solids)
 
 str(dset4_wide$collection_date)
 
-## good up to here now. 
-
 #breakdown TDS sample submissions by month
 ggplot(dset4_wide, aes(x = collection_date)) +
-  geom_freqpoly(bins=50)+
+  geom_point()+
+  geom_smooth()+
   labs(
     title = "Frequency of TDS sample submissions, 6/1/2023-5/31/2024",
     x = "Collection Date",
     y = "Sample Count"
   )
+
+tableA <- flextable(dset4_wide)
+
 
 
 #breakdown TDS concentration frequency observed
@@ -169,41 +172,71 @@ ggplot(dset4_wide, aes(x = total_dissolved_solids)) +
     y = "Sample Count"
   )
 
-
 #evaluate RPD between sample and lab dup for TDS to get lab method variance
+
+#reassign qc category to properly assign "parent" to lab dup due to earlier issue with the parent samples that are classified as field dup  
+lab_dup1 <- mutate(dset2_tds, lab_dup_category = case_when(lab_dup == "Y"~"lab_dup",
+                                                            TRUE~"not_dup"))
   
-tds_labdup <- filter(dset2_tds_qc, qc_category == "normal" | qc_category == "lab_dup")
-  
-tds_labdup1 <- tds_labdup %>%
-  mutate(
-    lab_dup_result = case_when(
-      lab_dup == "Y" & 
-    )
-  )
-  
-  
-str(dset2_tds_qc)
 
-
-
-
-
-
-#evaluate RPD between sample and field dup for TDS
-
-#filter out samples without TDS data, count remaining = 1914
-dset2_TDSonly <- filter(dset2, analyte == "Total Dissolved Solids") 
-
-#spread of TDS results 
-
-
-dset2_TDSonly <- gfg_data4 %>% 
+lab_dup1_wide <- lab_dup1 %>% 
   pivot_wider(id_cols = c(long_station_name, data_owner, sample_code, collection_date),
-              names_from = analyte2, values_from = result,
+              names_from = lab_dup_category, values_from = result,
               values_fill = NA)
 
+lab_dup1_wide2 <- filter(lab_dup1_wide, lab_dup !="NA")
+#count of 184 lab dups is same as earlier, good to go
 
-dset2_wide <- dset2 %>% 
-  pivot_wider(id_cols = c(long_station_name, data_owner, sample_code, collection_date, sample_type,lab_dup),
-              names_from = analyte, values_from = result,
-              values_fill = NA) 
+str(lab_dup1_wide2)
+
+#change character values to numeric for rpd calculation
+lab_dup1_wide2$not_dup <- as.numeric(lab_dup1_wide2$not_dup)
+lab_dup1_wide2$lab_dup <- as.numeric(lab_dup1_wide2$lab_dup)
+
+str(lab_dup1_wide2)
+
+# perform RPD calculation 
+lab_dup_rpd <- lab_dup1_wide2 %>% 
+  mutate(rpd =  100 * ((not_dup - lab_dup) / ((not_dup + lab_dup) / 2)))
+
+hist(lab_dup_rpd$rpd, breaks=200, main = "Lab Dup RPD distribution") 
+
+
+## good up to here now. 
+
+#evaluate RPD between sample and field dup for TDS to get field method variance
+
+#reassign qc category to properly assign "parent" to field dup including when used as lab dup  
+field_dup1 <- mutate(dset2_tds, field_dup_category = case_when(grepl("Replicate", sample_type) | grepl("Duplicate", sample_type)~"field_dup",
+                                                           TRUE~"not_dup"))
+
+field_dup2 <- mutate(field_dup1, main_id = case_when(parent_sample !="0" ~ paste(parent_sample),
+                                                       TRUE ~ paste(sample_code)))
+
+#remove all lab dups 
+field_dup3 <- filter(field_dup2, lab_dup == "")
+
+
+field_dup3_wide <- field_dup3 %>% 
+  pivot_wider(id_cols = c(long_station_name, data_owner, main_id, collection_date),
+              names_from = field_dup_category, values_from = result,
+              values_fill = NA)
+
+field_dup3_wide2 <- filter(field_dup3_wide, field_dup !="NA")
+#count of 179 lab dups is same as earlier, good to go
+
+str(field_dup3_wide2)
+
+#change character values to numeric for rpd calculation
+field_dup3_wide2$not_dup <- as.numeric(field_dup3_wide2$not_dup)
+field_dup3_wide2$field_dup <- as.numeric(field_dup3_wide2$field_dup)
+
+str(field_dup3_wide2)
+
+# perform RPD calculation 
+field_dup_rpd <- field_dup3_wide2 %>% 
+  mutate(rpd =  100 * ((not_dup - field_dup) / ((not_dup + field_dup) / 2)))
+
+hist(field_dup_rpd$rpd, breaks=200, main = "Field Dup RPD distribution") 
+
+
