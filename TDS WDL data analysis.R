@@ -150,10 +150,6 @@ ggplot(dset4_wide, aes(x = collection_date)) +
     y = "Sample Count"
   )
 
-tableA <- flextable(dset4_wide)
-
-
-
 #breakdown TDS concentration frequency observed
 
 count(dset4_wide, total_dissolved_solids > 20000)
@@ -172,6 +168,16 @@ ggplot(dset4_wide, aes(x = total_dissolved_solids)) +
     title = "Frequency of TDS concentrations, 6/1/2023-5/31/2024",
     x = "TDS (mg/L)",
     y = "Sample Count"
+  )
+
+ggplot(dset4_wide, aes(x = collection_date, y= total_dissolved_solids)) +
+  geom_point()+  
+  geom_smooth()+
+  ylim(0, 10000)+
+  labs(
+    title = "TDS concentrations over time, 6/1/2023-5/31/2024",
+    x = "Collection Date",
+    y = "TDS (mg/L)"
   )
 
 #evaluate RPD between sample and lab dup for TDS to get lab method variance
@@ -203,8 +209,6 @@ lab_dup_rpd <- lab_dup1_wide2 %>%
 
 hist(lab_dup_rpd$rpd, breaks=200, main = "Lab Dup RPD distribution") 
 
-
-## good up to here now. 
 
 #evaluate RPD between sample and field dup for TDS to get field method variance
 
@@ -240,5 +244,4 @@ field_dup_rpd <- field_dup3_wide2 %>%
   mutate(rpd =  100 * ((not_dup - field_dup) / ((not_dup + field_dup) / 2)))
 
 hist(field_dup_rpd$rpd, breaks=200, main = "Field Dup RPD distribution") 
-
 
