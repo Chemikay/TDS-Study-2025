@@ -143,8 +143,7 @@ str(dset4_wide$collection_date)
 
 #breakdown TDS sample submissions by month
 ggplot(dset4_wide, aes(x = collection_date)) +
-  geom_point()+
-  geom_smooth()+
+  geom_freqpoly()+
   labs(
     title = "Frequency of TDS sample submissions, 6/1/2023-5/31/2024",
     x = "Collection Date",
@@ -163,9 +162,12 @@ count(dset4_wide, total_dissolved_solids > 20000)
 count(dset4_wide, total_dissolved_solids > 10000)
 #56 out of 1386 TDS samples with concentration > 10,000 mg/L = 4.04% of samples
 
+count(dset4_wide, total_dissolved_solids > 2500)
+#146 out of 1386 TDS samples with concentration > 10,000 mg/L = 10.5% of samples
+
 ggplot(dset4_wide, aes(x = total_dissolved_solids)) +
   geom_freqpoly(bins=50)+
-  xlim(0, 10000)
+  xlim(0, 10000)+
   labs(
     title = "Frequency of TDS concentrations, 6/1/2023-5/31/2024",
     x = "TDS (mg/L)",
