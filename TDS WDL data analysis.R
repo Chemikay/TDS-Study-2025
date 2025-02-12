@@ -240,5 +240,5 @@ field_dup_rpd <- field_dup3_wide2 %>%
   mutate(rpd =  100 * ((not_dup - field_dup) / ((not_dup + field_dup) / 2)))
 
 hist(field_dup_rpd$rpd, breaks=200, main = "Field Dup RPD distribution") 
-
+s
 
