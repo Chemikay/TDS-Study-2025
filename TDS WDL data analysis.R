@@ -3,7 +3,6 @@ library(data.table)
 library(readxl)
 library(janitor)
 library(lubridate)
-library(flextable)
 library(here)
 
 # Pull in all original WDL data sets into one dataframe
@@ -103,8 +102,6 @@ str(dset3_wide)
 #reformat date
 dset3_wide$collection_date <- as.POSIXct(dset3_wide$collection_date, format="%m/%d/%Y %H:%M")
 
-#dset3_wide = mutate(dset3_wide, collection_date = as.Date("2022-11-01")) 
-
 str(dset3_wide)
 
 #reformat remaining fields
@@ -179,6 +176,60 @@ ggplot(dset4_wide, aes(x = collection_date, y= total_dissolved_solids)) +
     x = "Collection Date",
     y = "TDS (mg/L)"
   )
+class(dset3$result)
+
+#begin not review this section of code
+
+#breakdown by TDS concentration via SC
+
+# turn less than into the number it's less than
+dset3a <- mutate(dset3, result = as.numeric(str_remove(result, "<")))
+
+class(dset3a$result)
+
+dset3_tds = filter(dset3a, analyte == "Total Dissolved Solids" | analyte == "Field Specific Conductance" | analyte == "Specific Conductance" ) 
+
+#pivot wider to group by sample ID, pick first instance of sample ID present to remove these 34 dup values
+dset3_wide <- dset3 %>% 
+  pivot_wider(id_cols = c(sample_code, collection_date, data_owner, station_number),
+              names_from = analyte, values_from = result,
+              values_fill = NA, values_fn = first)
+
+dset3_tds_sc <- dset3_tds %>%
+  mutate(sc = case_when(
+      analyte == "Field Specific Conductance" ~ "Specific Conductance",
+        TRUE ~ analyte))
+  
+
+
+dset3_tds1 = mutate(dset3_tds, tds_conc_grp = case_when(result < 50 & result >= 2.5~"1",
+                                                        result < 100 & result >= 50 ~"2",
+                                                        result < 150 & result >= 100 ~"3",
+                                                        result < 200 & result >= 150 ~"4",
+                                                        result < 250 & result >= 200 ~"5",
+                                                        result < 300 & result >= 350~"6",
+                                                        result < 400 & result >= 350~"7",
+                                                        result < 500 & result >= 400~"8",
+                                                        result < 600 & result >= 500~"9",
+                                                        result < 700 & result >= 600~"10",
+                                                        result < 800 & result >= 700~"11",
+                                                        result < 900 & result >= 800~"12",
+                                                        result < 1000 & result >= 900~"13",
+                                                        result < 2000 & result >= 1000~"14",
+                                                        result < 3000 & result >= 2000~"15",
+                                                        result < 4000 & result >= 3000~"16",
+                                                        result < 5000 & result >= 4000~"17",
+                                                    TRUE ~ "18")) 
+
+dset3_tds1$tds_conc_grp <- as.numeric(dset3_tds1$tds_conc_grp)
+str(dset3_tds1)
+
+conc_grp <- dset3_tds1 %>%
+  group_by(tds_conc_grp) %>%
+  summarize(n = n())
+
+#end section not to review
+
 
 #evaluate RPD between sample and lab dup for TDS to get lab method variance
 
@@ -229,7 +280,7 @@ field_dup3_wide <- field_dup3 %>%
               values_fill = NA)
 
 field_dup3_wide2 <- filter(field_dup3_wide, field_dup !="NA")
-#count of 179 lab dups is same as earlier, good to go
+#count of 179 field dups is same as earlier, good to go
 
 str(field_dup3_wide2)
 
@@ -245,3 +296,13 @@ field_dup_rpd <- field_dup3_wide2 %>%
 
 hist(field_dup_rpd$rpd, breaks=200, main = "Field Dup RPD distribution") 
 
+#begin again not review following code
+
+library(pwr)
+
+#calculate power 
+#standard deviation = sqrt(variance)
+#difference = effect size
+sample_size_t <- pwr.t.test(d=0.5/sqrt(65), sig.level = 0.05, power = 0.8 , type="paired" )$n
+
+cat("Sample Size for Paired t-Test:", sample_size_t, "\n")
