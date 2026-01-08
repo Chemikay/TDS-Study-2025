@@ -56,11 +56,11 @@ names(dset1)
 unique(dset1$analyte)
 ```
 #TDS sample count
-##Filter out unneeded analytes to keep
+##Filter out unnecessary analytes. Keep related analytes by container, analyte relationship.
 -TDS (primary analyte of interest)
 -Bromide, Chloride, Nitrate, Sulfate (currently collected alongside TDS in same container)
 -TSS (possibly will be submitted alongside TDS in container post-TDS processing change)
--Field & Lab SC (relationship to TDS, may be useful)
+-Field & Lab SC (relationship to TDS)
 
 ```{r}
 
@@ -155,7 +155,7 @@ dset4_qc_wide <- mutate(dset3_qc_wide, anions = case_when(dissolved_sulfate != "
                                                     | dissolved_nitrate != "NA" ~ 'yes', TRUE ~ 'no'))
 
 #number of samples with TDS and any of dissolved sulfate, nitrate, bromide, chloride 
-count(dset4_qc_wide, anions == "yes") #1321 TDS samples also submitted for any anions, 35 not
+count(dset4_qc_wide, anions == "yes") #1351 TDS samples also submitted for any anions, 35 not
 
 ```
 ##count total number of samples analyzed for TDS and also TSS (good)
@@ -222,7 +222,7 @@ count(dset3_tds_wide, total_dissolved_solids > 10000)
 #56 out of 1386 TDS samples with concentration > 10,000 mg/L = 4.04% of samples
 
 count(dset3_tds_wide, total_dissolved_solids > 2500)
-#146 out of 1386 TDS samples with concentration > 10,000 mg/L = 10.5% of samples
+#146 out of 1386 TDS samples with concentration > 2500 mg/L = 10.5% of samples
 
 ggplot(dset3_tds_wide, aes(x = total_dissolved_solids)) +
   geom_freqpoly(bins=50)+
@@ -441,7 +441,7 @@ ggplot(ad_field_dup_rpd, aes(meanconc, ad)) +
 ```
 
 #Power Analysis
-Decision made to use absolute difference (AD) as measure of variance rather than relative percent difference (RPD) and focus on TDS concentrations at mean
+Decision made to use absolute difference (AD) as measure of variance rather than relative percent difference (RPD) and focus on TDS concentrations at mean to address heteroscedasticity issue. 
 
 ## Assumptions
 
@@ -451,7 +451,7 @@ Decision made to use absolute difference (AD) as measure of variance rather than
 
     -   **Question 1: Is there a statistically significant difference between the historic and new methods?**
 
-    -   **Question 2: Are any of the parameters within historic method contributing in a statistically significant way in this effect?**
+    -   **Question 2: Are any of the parameters within historic method contributing in a statistically significant way to this effect?**
     
 ## Study Design
 
@@ -465,8 +465,9 @@ Decision made to use absolute difference (AD) as measure of variance rather than
 ### Question 1
 Will use the following model:
 
-$$log(Y_{TDS}) \sim X_{new} + (1|X_{pair})$$ where:
+$$log(Y_{TDS}) \sim X_{new} + (1|X_{pair})$$ 
 
+where:
 $log(Y_{TDS})$: TDS concentration (log because parent/duplicate samples
 have a power law relationship)
 
@@ -475,11 +476,11 @@ $X_{new}$: if it's the new method or the old method
 $1|X_{pair}$: a random effect that ties the two paired old/new values
 together
 
--   can just use $Date$ if they don't overlap (NOTE: ask perry about this)
+-   can just use $Date$ if they don't overlap (NOTE: if each pair was sampled on a different date, then Date already uniquely specifies the pairs and X_date = X_pair) ##Still don't get this and what to use, need to f/u with Perry (KJR 1/5/26)
 
 ### Question 2
 
-Plan to look at capsule filter itself specifically to assess whether the effect of this filter type in the historic method contributes to a significant difference between the historic and new
+Plan to look at capsule filter itself specifically to assess whether the effect of this filter type in the historic method contributes to a statistically significant difference between the historic and new
 methods.
 
 $$log(Y_{TDS}) \sim X_{new} + X_{old,capsule filter} + X_{new}X_{old,capsule filter} + (1|X_{pair})$$
@@ -495,17 +496,14 @@ Using Cohen's $f^2$ test to determine the number of samples needed for a given p
 Needed information:
 
 -   estimate of effect size
-
 -   number of covariates
-
 -   desired Type I and Type II error rate
 
 ## effect size
 
 Using the relationship between actual parent-duplicate paired samples, whether they are truly duplicates of one another. 
 
-Assessing this by using a log-log (power law) relationship between the
-parent/duplicate samples. Valid based on the error distribution between the two; it's not linear in "regular" space and is linear in log-log space. Do for both field duplicates and lab duplicates.
+Assessing this by using a log-log (power law) relationship between the parent/duplicate samples. Valid based on the error distribution between the two; it's not linear in "regular" space and is linear in log-log space. Do for both field duplicates and lab duplicates.
 
 ```{r}
 df_fd <- ad_field_dup_rpd %>% filter(ad < 100) # remove extreme outliers (9 total)
@@ -525,7 +523,7 @@ summary(mod1)
 ```
 Can use $R^2$ here as an effect size estimate based on field variance, equals 0.9998 ie., basically 1. Very high and best to add some flexibility and lower this $R^2$. 
 
-(the field_dup coefficient being \~1 means there's a 1% change in parent concentration per 1% change in duplicate concentration, ie., they're essentially the same thing)
+Note: the field_dup coefficient being \~1 means there's a 1% change in parent concentration per 1% change in duplicate concentration, ie., they're essentially the same thing)
 
 ```{r}
 df_ld <- ad_lab_dup_rpd %>% filter(ad < 100) # remove extreme outliers (2 total)
@@ -561,24 +559,32 @@ Can use $R^2$ here as an effect size estimate based on lab variance, equals 1. A
 Assuming Type 1 error rate of 1% and Type 2 error rate of 10% (so 90% power)
 
 ```{r}
+##original that I had:
 # f2 = R^2/(1-R^2), using 0.8
 # f2 = explained variance/unexplained variance; so f2 = 1 means there's a 1:1 ratio
+##
+  
+##updated 1/5/26 with Perry's input on f2 equation and R^2 update 
+# f2 = 1-R^2, increasing R^2 from 0 to 0.3 to account for covariates
 
-pwr_calc <- pwr.f2.test(u = 10, f2 = (0.8/(1-0.8)), sig.level = 0.01, power = 0.9)
 
-pwr_calc
+pwr_calc_old <- pwr.f2.test(u = 10, f2 = (0.8/(1-0.8)), sig.level = 0.01, power = 0.9)
+
+pwr_calc_new <- pwr.f2.test(u = 10, f2 = (1-0.3), sig.level = 0.01, power = 0.9)
+
+pwr_calc_new
 ```
 
 Number of samples $N$ would be $v+1+u$, where $u$ is the number
 of covariates:
 
 ```{r}
-samp_size <- pwr_calc$v+1+10
+samp_size <- pwr_calc_new$v+1+10
 
 samp_size
 ```
 
-So I'd need \~20 samples **in total**.
+So I'd need \~50 samples **in total**.
 
 **Note** the model doesn't account for the fact that I want to split
 this across field groups.
