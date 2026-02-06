@@ -7,21 +7,18 @@ date: "2025-02-27"
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
-# Purpose
-This is a R Markdown HTML document to
 
-```{r, echo = FALSE}
-library(tidyverse)
+```{r Load Libraries, include=FALSE}
 library(data.table)
 library(readxl)
 library(janitor)
 library(lubridate)
 library(here)
 library(pwr)
+library(tidyverse) 
 ```
-# Import data (good)
 
-```{r}
+```{r Import data}
 # Pull in all original WDL data sets into one dataframe
 # Unzip folder containing WDL data to a temporary directory
 unzip(zipfile = here("WDL_data.zip"), exdir = tempdir())
@@ -39,9 +36,7 @@ dset <-
     full.names = TRUE
   ) %>%
   lapply(read.csv) 
-```
 ##Check file (good)
-```{r}
 
 attr(dset, "names") <- filelist
 
@@ -54,13 +49,31 @@ View(dset1)
 names(dset1)
 
 unique(dset1$analyte)
-```
+
 #TDS sample count
 ##Filter out unnecessary analytes. Keep related analytes by container, analyte relationship.
--TDS (primary analyte of interest)
--Bromide, Chloride, Nitrate, Sulfate (currently collected alongside TDS in same container)
--TSS (possibly will be submitted alongside TDS in container post-TDS processing change)
--Field & Lab SC (relationship to TDS)
+#-TDS (primary analyte of interest)
+#-Bromide, Chloride, Nitrate, Sulfate (currently collected alongside TDS in same container)
+#-TSS (possibly will be submitted alongside TDS in container post-TDS processing change)
+#-Field & Lab SC (relationship to TDS)
+
+```
+
+```{r Initial Data Cleanup}
+#remove last two rows from each project specific data section within dset1 (one blank row, one disclaimer row per project data set)
+dset1 <- dset1 %>%
+  filter(
+    !is.na(data_owner),                      
+    str_trim(data_owner) != "",              
+    !str_detect(
+      data_owner,
+      fixed("*Codes in brackets ([]) following the analyte name refer to the Method Comparibility Code.  For more information, please refer to https://cdowr-dev.outsystemsenterprise.com/WaterDataLibrary/MTCCodes.aspx.")
+    )                                        
+  )
+
+
+```
+
 
 ```{r}
 
@@ -70,15 +83,33 @@ dset2 <- filter(dset1, analyte == "Field Specific Conductance" | analyte == "Dis
                 | analyte == "Dissolved Bromide" | analyte == "Dissolved Chloride") 
 
 ```
-## count number of TDS QC samples (in a TDS-specific dataframe) (good)
-```{r}
+
+```{r format collection date, make new df2 retain OG dset2}
+#format collection date column to remove time from date field
+dset2 <- mutate(dset2, collection_date = as.Date(collection_date, format = '%m/%d/%Y')) #field now structured yyyy-mm-dd
+
+#define date ranges
+s1 <-as.Date("2023-06-01")
+e1 <- as.Date("2024-05-31")
+s2 <-as.Date("2024-06-01")
+e2 <- as.Date("2025-05-31")
+
+#new data frame for the new year of data
+df2 <- dset2 %>% filter(collection_date >= s2 & collection_date <= e2)
+
+#retain original date ranges on dset2 to run Kateys original code
+dset2 <- dset2 %>% filter(collection_date >= s1 & collection_date <= e1)
+```
+
+
+```{r count number of TDS QC samples (in a TDS-specific dataframe)}
 #count lab dups, field collected blanks, and field dups submitted for TDS
 dset2_tds <- filter(dset2, analyte == "Total Dissolved Solids")
 
 str(dset2_tds)
 
 #remove collection time from collection date field to help out later with linking duplicates since collection time can be different
-dset2_tds <- mutate(dset2_tds, collection_date = as.Date(collection_date, format = '%m/%d/%Y'))
+#dset2_tds <- mutate(dset2_tds, collection_date = as.Date(collection_date, format = '%m/%d/%Y'))
 
 dset2_tds_qc <- mutate(dset2_tds, qc_category = case_when(lab_dup == "Y"~"lab_dup",
                        grepl("Blank", sample_type)~"field_blank",
@@ -86,6 +117,7 @@ dset2_tds_qc <- mutate(dset2_tds, qc_category = case_when(lab_dup == "Y"~"lab_du
                        TRUE~"normal"))
 
 count(dset2_tds_qc, qc_category)
+count(dset2_tds_qc, data_owner)
 #qc_category     n
 #<char> <int>
 #1: field_blank   165
@@ -93,17 +125,52 @@ count(dset2_tds_qc, qc_category)
 #3:     lab_dup   184
 #4:      normal  1386
 
+
+#tr numbers with data from WDL
+#1:   field_blank	  165		
+#2:   field_dup	    179		
+#3:   lab_dup	      184		
+#4:   normal	     1386
+  
+#good
 ```
+
+
+
+
+```{r TDS count new}
+#count lab dups, field collected blanks, and field dups submitted for TDS
+df2_tds <- filter(df2, analyte == "Total Dissolved Solids")
+
+df2_tds_qc <- mutate(df2_tds, qc_category = case_when(lab_dup == "Y"~"lab_dup",
+                       grepl("Blank", sample_type)~"field_blank",
+                       grepl("Replicate", sample_type) | grepl("Duplicate", sample_type) & lab_dup !="Y"~"field_dup",
+                       TRUE~"normal"))
+
+count(df2_tds_qc, qc_category)
+
+#field_blank	246		
+#field_dup	188			
+#lab_dup	103		
+#normal	1161	
+```
+
 # Samples across containers
-## remove all QC samples in TDS data frame (good)
-```{r}
+```{r remove all QC samples in TDS data frame}
 
 #remove all qc samples 
 dset3_tds <- filter(dset2_tds_qc, qc_category == "normal")
 #remaining normal TDS samples: 1386
+
+#remove all qc samples for NEW data
+df3_tds <- filter(df2_tds_qc, qc_category == "normal")
+#remaining normal TDS samples: 1161
+
+#(good)
 ```
-## remove duplicate values across all analytes (good)
-```{r}
+
+
+```{r remove duplicate values across all analytes}
 #pull back in other analytes of interest to parse out qc samples, need to account for lab dups that are done on a field duplicate
 #this doesn't properly account for field dups which serve as parent for lab dup RPD so need to account for that later
 dset2_qc <- mutate(dset2, qc_category = case_when(lab_dup == "Y"~"lab_dup",
@@ -119,19 +186,48 @@ r = dset3_qc %>%
   count(sample_code, analyte) %>% 
   filter(n > 1)
 
-#there are 32 duplicates, 2 are dissolved chloride and remainder are field specific conductance.I brought up Chloride observation to QA and data owner to handle 
+#there are 30 duplicates, all  are field specific conductance. Katey brought up initial Chloride observation to QA and data owner to handle 
 #separately, will choose first value. Spot checking the Field SC duplicates, there is a different status assigned but values are the same. Also choosing first value
 
-#pivot wider to group by sample ID, pick first instance of sample ID present to remove these 34 dup values
+#pivot wider to group by sample ID, pick first instance of sample ID present to remove these 30 dup values
 dset3_qc_wide <- dset3_qc %>% 
   pivot_wider(id_cols = c(sample_code, data_owner, station_number),
               names_from = analyte, values_from = result,
               values_fill = NA, values_fn = first)
 
 dset3_qc_wide <- clean_names(dset3_qc_wide)
+
+#(good)
 ```
-## Confirm no duplicates using sample code (good)
-```{r}
+
+
+```{r NEW remove duplicate values across all analytes}
+#pull back in other analytes of interest to parse out qc samples, need to account for lab dups that are done on a field duplicate
+#this doesn't properly account for field dups which serve as parent for lab dup RPD so need to account for that later
+df2_qc <- mutate(df2, qc_category = case_when(lab_dup == "Y"~"lab_dup",
+                                                     grepl("Blank", sample_type)~"field_blank",
+                                                     grepl("Replicate", sample_type) | grepl("Duplicate", sample_type) & lab_dup !="Y"~"field_dup",
+                                                     TRUE~"normal"))
+#remove all qc samples 
+df3_qc <- filter(df2_qc, qc_category == "normal")
+
+#look for duplicates using analyte, sample code, as unique identifiers
+r2 = df3_qc %>% 
+  count(sample_code, analyte) %>% 
+  filter(n > 1)
+#showing no duplicates
+
+#pivot wider to group by sample ID, pick first instance of sample ID present to remove these 30 dup values
+df3_qc_wide <- df3_qc %>% 
+  pivot_wider(id_cols = c(sample_code, data_owner, station_number),
+              names_from = analyte, values_from = result,
+              values_fill = NA, values_fn = first)
+
+df3_qc_wide <- clean_names(df3_qc_wide)
+```
+
+
+```{r Confirm no duplicates using sample code}
 dset3_qc_wide %>% 
   count(sample_code) %>% 
   filter(n > 1)
@@ -139,17 +235,31 @@ dset3_qc_wide %>%
 
 str(dset3_qc_wide)
 
+#confirm no duplicates for NEW data
+df3_qc_wide %>% 
+  count(sample_code) %>% 
+  filter(n > 1)
+#no duplicates
 ```
-##filter out any samples without TDS (good)
-```{r}
+
+
+```{r filter out any samples without TDS }
 
 dset3_qc_wide <- dset3_qc_wide %>%
   drop_na(total_dissolved_solids)
 
 #number of samples with just TDS is 1386, total observations in dset3qc_wide
+#(good)
+
+#filter out any samples without TDS NEW data
+df3_qc_wide <- df3_qc_wide %>%
+  drop_na(total_dissolved_solids)
+#number of samples with just tds matches df3_tds with 1161 records
+#good
 ```
-##count total number of samples analyzed for TDS and also anions (good)
-```{r}
+
+
+```{r count total number of samples analyzed for TDS and also anions}
 #create new analyte column for any anions methods
 dset4_qc_wide <- mutate(dset3_qc_wide, anions = case_when(dissolved_sulfate != "NA" | dissolved_bromide != "NA" | dissolved_chloride != "NA"
                                                     | dissolved_nitrate != "NA" ~ 'yes', TRUE ~ 'no'))
@@ -157,16 +267,44 @@ dset4_qc_wide <- mutate(dset3_qc_wide, anions = case_when(dissolved_sulfate != "
 #number of samples with TDS and any of dissolved sulfate, nitrate, bromide, chloride 
 count(dset4_qc_wide, anions == "yes") #1351 TDS samples also submitted for any anions, 35 not
 
+# (good)
+
+#NEW
+#create new analyte column for any anions methods
+df4_qc_wide <- mutate(df3_qc_wide, anions = case_when(dissolved_sulfate != "NA" | dissolved_bromide != "NA" | dissolved_chloride != "NA"
+                                                    | dissolved_nitrate != "NA" ~ 'yes', TRUE ~ 'no'))
+
+#number of samples with TDS and any of dissolved sulfate, nitrate, bromide, chloride 
+count(df4_qc_wide, anions == "yes") #1119 TDS samples also submitted for any anions, 42 not
 ```
-##count total number of samples analyzed for TDS and also TSS (good)
-```{r}
+
+
+```{r count total number of samples analyzed for TDS and also TSS}
 #number of samples with TDS and TSS
 count(dset4_qc_wide, total_suspended_solids !="NA") #1046 TDS samples also submitted for TSS, 340 not
 
+#count number of tss samples below RP
+dset4_qc_wide %>%
+  filter(total_suspended_solids < 2.5) %>%
+  count()
+#444
+# (good)
+
+#NEW
+#number of samples with TDS and TSS
+count(df4_qc_wide, total_suspended_solids !="NA") #836 TDS samples also submitted for TSS, 325 not
+
+#count number of tss samples below RP
+df4_qc_wide %>%
+  filter(total_suspended_solids < 2.5) %>%
+  count()
+#319
+# (good)
 ```
+
+
 #TDS dataset summary
-## reformat so concentrations are numeric (good)
-```{r}
+```{r reformat so concentrations are numeric}
 
 #reformat remaining fields
 dset4_qc_wide <- mutate(dset4_qc_wide, total_dissolved_solids = as.numeric(total_dissolved_solids),
@@ -178,10 +316,32 @@ dset4_qc_wide <- mutate(dset4_qc_wide, total_dissolved_solids = as.numeric(total
                      dissolved_chloride = as.numeric(dissolved_chloride),
                      dissolved_nitrate = as.numeric(dissolved_nitrate))
 str(dset4_qc_wide)
+
+lapply(dset4_qc_wide, function(x) unique(x[is.na(as.numeric(x))]))
+
+#NAs introduced by coercion. This is due to columns containing special characters that cannot be converted to numeric.
+#samples under Reporting limit were supposed to be "<RL". leaving as NAs for now. circle back on next run. 
+
+#NEW
+#reformat remaining fields
+df4_qc_wide <- mutate(df4_qc_wide, total_dissolved_solids = as.numeric(total_dissolved_solids),
+                      total_suspended_solids = as.numeric(total_suspended_solids),   
+                     field_specific_conductance = as.numeric(field_specific_conductance),
+                     specific_conductance = as.numeric(specific_conductance),
+                     dissolved_sulfate = as.numeric(dissolved_sulfate),
+                     dissolved_bromide = as.numeric(dissolved_bromide),
+                     dissolved_chloride = as.numeric(dissolved_chloride),
+                     dissolved_nitrate = as.numeric(dissolved_nitrate))
+str(df4_qc_wide)
+
+lapply(df4_qc_wide, function(x) unique(x[is.na(as.numeric(x))]))
+
+#NAs introduced by coercion. This is due to columns containing special characters that cannot be converted to numeric.
+#samples under Reporting limit were supposed to be "<RL". leaving as NAs for now. circle back on next run. 
 ```
 
-#summary of TDS values & data visualization (good)
-```{r}
+
+```{r summary of TDS values & data visualization}
 summary(dset4_qc_wide$total_dissolved_solids)
 
 #Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
@@ -243,9 +403,81 @@ ggplot(dset3_tds_wide, aes(x = collection_date, y= total_dissolved_solids)) +
     y = "TDS (mg/L)"
   )
 
+# (good)
 ```
-## Breakdown TDS into concentrations
-```{r}
+
+```{r (NEW) summary of TDS values & data visualization}
+summary(df4_qc_wide$total_dissolved_solids)
+
+#Min. 1st Qu.  Median    Mean 3rd Qu.    Max.  NAs
+#29.0    100.0   181.0  937.8   283.8 28600.0   11   
+
+#!these 11 NAs appear to be created from 3 samples that were below RL, and 8 "no sample (N.S.)" records.
+
+df3_tds %>% 
+  count(sample_code) %>% 
+  filter(n > 1)
+#no duplicates so good to go
+
+#pivot wider to group by sample ID
+df3_tds_wide <- df3_tds %>% 
+  pivot_wider(id_cols = c(sample_code, collection_date, data_owner, station_number),
+              names_from = analyte, values_from = result)
+
+df3_tds_wide <- clean_names(df3_tds_wide)
+
+#remove records with N.S. (8 records with no sample)
+df3_tds_wide <- filter(df3_tds_wide, total_dissolved_solids != "N.S.")
+
+#reformat results to numeric
+df3_tds_wide <- mutate(df3_tds_wide, total_dissolved_solids = as.numeric(total_dissolved_solids))
+#3 samples had values below RP, coerced into NAs due to this. 
+#remove the NAs
+df3_tds_wide <- filter(df3_tds_wide, !is.na(total_dissolved_solids))
+#1150 samples
+#breakdown TDS sample submissions by date
+ggplot(df3_tds_wide, aes(x = collection_date)) +
+  geom_freqpoly()+
+  labs(
+    title = "Frequency of TDS sample submissions, 6/1/2024-5/31/2025",
+    x = "Collection Date",
+    y = "Sample Count"
+  )
+
+#breakdown TDS concentration frequency observed
+
+count(df3_tds_wide, total_dissolved_solids > 20000)
+#13 out of 1150 TDS samples with concentration > 20,000 mg/L = 1.13% of samples
+
+count(df3_tds_wide, total_dissolved_solids > 10000)
+#32 out of 1150 TDS samples with concentration > 10,000 mg/L = 2.78% of samples
+
+count(df3_tds_wide, total_dissolved_solids > 2500)
+#73 out of 1150 TDS samples with concentration > 2500 mg/L = 6.3% of samples
+
+ggplot(df3_tds_wide, aes(x = total_dissolved_solids)) +
+  geom_freqpoly(bins=50)+
+  xlim(0, 10000)+
+  labs(
+    title = "Frequency of TDS concentrations, 6/1/2024-5/31/2025",
+    x = "TDS (mg/L)",
+    y = "Sample Count"
+  )
+
+ggplot(df3_tds_wide, aes(x = collection_date, y= total_dissolved_solids)) +
+  geom_point()+  
+  geom_smooth()+
+  ylim(0, 10000)+
+  labs(
+    title = "TDS concentrations over time, 6/1/2024-5/31/2025",
+    x = "Collection Date",
+    y = "TDS (mg/L)"
+  )
+
+# (good)
+```
+
+```{r Breakdown TDS into concentrations}
 
 dset3_tds_wide_conc = mutate(dset3_tds_wide, tds_conc_grp = case_when(total_dissolved_solids < 50 & total_dissolved_solids >= 2.5~"<49",
                                                          total_dissolved_solids < 100 & total_dissolved_solids >= 50 ~"50-99",
@@ -268,17 +500,41 @@ dset3_tds_wide_conc = mutate(dset3_tds_wide, tds_conc_grp = case_when(total_diss
                         factor(levels = c("<49", "50-99", "100-149", "150-199", "200-249", "250-299", "300-399", "400-499", "500-599", "600-699", "700-799", "800-899", "900-999", "1000-1999", "2000-2999",
                        "3000-3999", "4000-4999", ">=5000")))
    
-df_conc_grp <- dset3_tds_wide_conc %>%
+dset_conc_grp <- dset3_tds_wide_conc %>%
    group_by(tds_conc_grp) %>%
    summarize(n = n())
 
-df_conc_grp
+#repeat for NEW data
+df3_tds_wide_conc = mutate(df3_tds_wide, tds_conc_grp = case_when(total_dissolved_solids < 50 & total_dissolved_solids >= 2.5~"<49",
+                                                         total_dissolved_solids < 100 & total_dissolved_solids >= 50 ~"50-99",
+                                                        total_dissolved_solids < 150 & total_dissolved_solids >= 100 ~"100-149",
+                                                         total_dissolved_solids < 200 & total_dissolved_solids >= 150 ~"150-199",
+                                                         total_dissolved_solids < 250 & total_dissolved_solids >= 200 ~"200-249",
+                                                         total_dissolved_solids < 300 & total_dissolved_solids >= 250~"250-299", 
+                                                         total_dissolved_solids < 400 & total_dissolved_solids >= 300~"300-399",
+                                                         total_dissolved_solids < 500 & total_dissolved_solids >= 400~"400-499",
+                                                         total_dissolved_solids < 600 & total_dissolved_solids >= 500~"500-599",
+                                                         total_dissolved_solids < 700 & total_dissolved_solids >= 600~"600-699",
+                                                         total_dissolved_solids < 800 & total_dissolved_solids >= 700~"700-799",
+                                                         total_dissolved_solids < 900 & total_dissolved_solids >= 800~"800-899",
+                                                         total_dissolved_solids < 1000 & total_dissolved_solids >= 900~"900-999",
+                                                         total_dissolved_solids < 2000 & total_dissolved_solids >= 1000~"1000-1999",
+                                                         total_dissolved_solids < 3000 & total_dissolved_solids >= 2000~"2000-2999",
+                                                         total_dissolved_solids < 4000 & total_dissolved_solids >= 3000~"3000-3999",
+                                                         total_dissolved_solids < 5000 & total_dissolved_solids >= 4000~"4000-4999",
+                                                     TRUE ~ ">=5000") %>%
+                        factor(levels = c("<49", "50-99", "100-149", "150-199", "200-249", "250-299", "300-399", "400-499", "500-599", "600-699", "700-799", "800-899", "900-999", "1000-1999", "2000-2999",
+                       "3000-3999", "4000-4999", ">=5000")))
+   
+df_conc_grp <- df3_tds_wide_conc %>%
+   group_by(tds_conc_grp) %>%
+   summarize(n = n())
 
 ```
-#Evaluate Field and Lab variance via RPD
-## Evaluate lab variance using Lab Dup RPD for TDS
 
-```{r}
+
+#Evaluate Field and Lab variance via RPD
+```{r Evaluate lab variance using Lab Dup RPD for TDS}
 
 #reassign qc category to properly assign "parent" to lab dup due to earlier issue with the parent samples that are classified as field dup  
 lab_dup1 <- mutate(dset2_tds, lab_dup_category = case_when(lab_dup == "Y"~"lab_dup",
@@ -307,9 +563,38 @@ lab_dup_rpd <- lab_dup1_wide2 %>%
 hist(lab_dup_rpd$rpd, breaks=200, main = "Lab Dup RPD distribution") 
 
 ```
-## Evaluate field variance using Field Dup RPD for TDS
 
-```{r}
+```{r (NEW data) Evaluate lab variance using Lab Dup RPD for TDS}
+
+#reassign qc category to properly assign "parent" to lab dup due to earlier issue with the parent samples that are classified as field dup  
+nlab_dup1 <- mutate(df2_tds, lab_dup_category = case_when(lab_dup == "Y"~"lab_dup",
+                                                            TRUE~"not_dup"))
+
+nlab_dup1_wide <- nlab_dup1 %>% 
+  pivot_wider(id_cols = c(long_station_name, data_owner, sample_code, collection_date),
+              names_from = lab_dup_category, values_from = result,
+              values_fill = NA)
+
+nlab_dup1_wide2 <- filter(nlab_dup1_wide, lab_dup !="NA")
+#count of 184 lab dups is same as earlier (103), good to go
+
+
+
+#change character values to numeric for rpd calculation
+nlab_dup1_wide2$not_dup <- as.numeric(nlab_dup1_wide2$not_dup)
+nlab_dup1_wide2$lab_dup <- as.numeric(nlab_dup1_wide2$lab_dup)
+
+
+
+# perform RPD calculation 
+nlab_dup_rpd <- nlab_dup1_wide2 %>% 
+  mutate(rpd =  100 * ((not_dup - lab_dup) / ((not_dup + lab_dup) / 2)))
+
+hist(nlab_dup_rpd$rpd, breaks=200, main = "New  Data Lab Dup RPD distribution") 
+
+```
+
+```{r Evaluate field variance using Field Dup RPD for TDS}
 #evaluate RPD between sample and field dup for TDS to get field method variance
 
 #reassign qc category to properly assign "parent" to field dup including when used as lab dup  
@@ -345,10 +630,44 @@ field_dup_rpd <- field_dup3_wide2 %>%
 
 hist(field_dup_rpd$rpd, breaks=200, main = "Field Dup RPD distribution") 
 ```
-#Evaluate Heteroscedasticity via RPD vs Absolute Difference
-## Evaluate lab variance using Lab Dup AD for TDS
 
-```{r}
+```{r (NEW data) Evaluate field variance using Field Dup RPD for TDS}
+#evaluate RPD between sample and field dup for TDS to get field method variance
+
+#reassign qc category to properly assign "parent" to field dup including when used as lab dup  
+nfield_dup1 <- mutate(df2_tds, field_dup_category = case_when(grepl("Replicate", sample_type) | grepl("Duplicate", sample_type)~"field_dup",
+                                                           TRUE~"not_dup"))
+
+nfield_dup2 <- mutate(nfield_dup1, main_id = case_when(parent_sample !="0" ~ paste(parent_sample),
+                                                       TRUE ~ paste(sample_code)))
+
+#remove all lab dups 
+nfield_dup3 <- filter(nfield_dup2, lab_dup == "")
+
+
+nfield_dup3_wide <- nfield_dup3 %>% 
+  pivot_wider(id_cols = c(long_station_name, data_owner, main_id, collection_date),
+              names_from = field_dup_category, values_from = result,
+              values_fill = NA)
+
+nfield_dup3_wide2 <- filter(nfield_dup3_wide, field_dup !="NA")
+#count of 188 field dups match earlier findings, good. 
+
+
+#change character values to numeric for rpd calculation
+nfield_dup3_wide2$not_dup <- as.numeric(nfield_dup3_wide2$not_dup)
+nfield_dup3_wide2$field_dup <- as.numeric(nfield_dup3_wide2$field_dup)
+
+
+# perform RPD calculation 
+nfield_dup_rpd <- nfield_dup3_wide2 %>% 
+  mutate(rpd =  100 * ((not_dup - field_dup) / ((not_dup + field_dup) / 2)))
+
+hist(nfield_dup_rpd$rpd, breaks=200, main = "New Data Field Dup RPD distribution") 
+```
+
+#Evaluate Heteroscedasticity via RPD vs Absolute Difference
+```{r Evaluate lab variance using Lab Dup AD for TDS}
 ad_lab_dup_rpd <- lab_dup1_wide2 %>%
    mutate(rpd =  100 * ((not_dup - lab_dup) / ((not_dup + lab_dup) / 2)),
           ad = (not_dup - lab_dup),
@@ -360,6 +679,19 @@ ad_lab_dup_rpd <- lab_dup1_wide2 %>%
    theme_bw()
 ```
 
+```{r (NEW data) Evaluate lab variance using Lab Dup AD for TDS}
+nad_lab_dup_rpd <- nlab_dup1_wide2 %>%
+   mutate(rpd =  100 * ((not_dup - lab_dup) / ((not_dup + lab_dup) / 2)),
+          ad = (not_dup - lab_dup),
+          meanconc = (lab_dup+not_dup)/2)
+ 
+# 100% of samples, rpd
+ ggplot(nad_lab_dup_rpd, aes(meanconc, rpd)) +
+   geom_point() +
+   theme_bw()
+```
+
+
 ```{r}
 # 65% of samples, rpd
  
@@ -369,10 +701,28 @@ ad_lab_dup_rpd <- lab_dup1_wide2 %>%
    xlim(0, 250)
 ```
 
+```{r NEW data}
+# 65% of samples, rpd
+ 
+ ggplot(nad_lab_dup_rpd, aes(meanconc, rpd)) +
+   geom_point() +
+   theme_bw() +
+   xlim(0, 250)
+```
+
+
 ```{r}
 # 100% of samples, ad
  
  ggplot(ad_lab_dup_rpd, aes(meanconc, ad)) +
+   geom_point() +
+   theme_bw()
+```
+
+```{r (NEW data)}
+# 100% of samples, ad
+ 
+ ggplot(nad_lab_dup_rpd, aes(meanconc, ad)) +
    geom_point() +
    theme_bw()
 ```
@@ -385,6 +735,16 @@ ad_lab_dup_rpd <- lab_dup1_wide2 %>%
    theme_bw() +
    xlim(0, 250)
 ```
+
+```{r (NEW data)}
+# 65% of samples, ad
+ 
+ ggplot(nad_lab_dup_rpd, aes(meanconc, ad)) +
+   geom_point() +
+   theme_bw() +
+   xlim(0, 250)
+```
+
 ## Evaluate field variance using Field Dup AD for TDS
 ```{r}
 ad_field_dup_rpd <- field_dup3_wide2 %>%
@@ -398,10 +758,31 @@ ggplot(ad_field_dup_rpd, aes(meanconc, rpd)) +
   theme_bw()
 ```
 
+```{r NEW data}
+nad_field_dup_rpd <- nfield_dup3_wide2 %>%
+  mutate(rpd =  100 * ((not_dup - field_dup) / ((not_dup + field_dup) / 2)),
+         ad = (not_dup - field_dup),
+         meanconc = (field_dup+not_dup)/2)
+
+# 100% of samples, rpd
+ggplot(nad_field_dup_rpd, aes(meanconc, rpd)) +
+  geom_point() +
+  theme_bw()
+```
+
 ```{r}
 # 94% of samples, rpd
 
 ggplot(ad_field_dup_rpd, aes(meanconc, rpd)) +
+  geom_point() +
+theme_bw() +
+  xlim(0, 7500)
+```
+
+```{r NEW data}
+# 94% of samples, rpd
+
+ggplot(nad_field_dup_rpd, aes(meanconc, rpd)) +
   geom_point() +
 theme_bw() +
   xlim(0, 7500)
@@ -416,9 +797,25 @@ ggplot(ad_field_dup_rpd, aes(meanconc, rpd)) +
   xlim(0, 250)
 ```
 
+```{r NEW data}
+# 63% of samples, rpd
+
+ggplot(nad_field_dup_rpd, aes(meanconc, rpd)) +
+  geom_point() +
+  theme_bw() +
+  xlim(0, 250)
+```
+
 ```{r}
 # 100% of samples, ad
 ggplot(ad_field_dup_rpd, aes(meanconc, ad)) +
+  geom_point() +
+  theme_bw()
+```
+
+```{r NEW data}
+# 100% of samples, ad
+ggplot(nad_field_dup_rpd, aes(meanconc, ad)) +
   geom_point() +
   theme_bw()
 ```
@@ -431,10 +828,27 @@ ggplot(ad_field_dup_rpd, aes(meanconc, ad)) +
   xlim(0, 7500)
 ```
 
+```{r NEW data}
+# 94% of samples, ad
+ggplot(nad_field_dup_rpd, aes(meanconc, ad)) +
+  geom_point() +
+  theme_bw() +
+  xlim(0, 7500)
+```
+
 ```{r}
 # 63% of samples, ad
 
 ggplot(ad_field_dup_rpd, aes(meanconc, ad)) +
+  geom_point() +
+  theme_bw() +
+  xlim(0, 250)
+```
+
+```{r NEW data}
+# 63% of samples, ad
+
+ggplot(nad_field_dup_rpd, aes(meanconc, ad)) +
   geom_point() +
   theme_bw() +
   xlim(0, 250)
@@ -512,15 +926,39 @@ mod2 <- lm(not_dup ~ field_dup, data = df_fd)
 # this is the same as a parent-dup vs. [parent+dup]/2 plot, ie. error vs mean
 plot(mod2, which = 1)
 ```
+
+```{r NEW data}
+ndf_fd <- nad_field_dup_rpd %>% filter(ad < 100) # remove extreme outliers (8 total)
+nmod2 <- lm(not_dup ~ field_dup, data = ndf_fd)
+
+# this is the same as a parent-dup vs. [parent+dup]/2 plot, ie. error vs mean
+plot(nmod2, which = 1)
+```
+
 ```{r}
 mod1 <- lm(log(not_dup) ~ log(field_dup), data = df_fd)
 
 # this is the same as a log(parent)-log(dup) vs. [log(parent)+log(dup)]/2 plot, ie. error vs mean
 plot(mod1, which = 1)
 ```
+
+```{r NEW data}
+nmod1 <- lm(log(not_dup) ~ log(field_dup), data = ndf_fd)
+
+# this is the same as a log(parent)-log(dup) vs. [log(parent)+log(dup)]/2 plot, ie. error vs mean
+plot(nmod1, which = 1)
+```
+
 ```{r}
 summary(mod1)
 ```
+
+```{r NEW data}
+summary(nmod1)
+
+
+```
+
 Can use $R^2$ here as an effect size estimate based on field variance, equals 0.9998 ie., basically 1. Very high and best to add some flexibility and lower this $R^2$. 
 
 Note: the field_dup coefficient being \~1 means there's a 1% change in parent concentration per 1% change in duplicate concentration, ie., they're essentially the same thing)
@@ -532,15 +970,37 @@ mod4 <- lm(not_dup ~ lab_dup, data = df_ld)
 # this is the same as a parent-dup vs. [parent+dup]/2 plot, ie. error vs mean
 plot(mod4, which = 1)
 ```
+
+```{r NEW data}
+ndf_ld <- nad_lab_dup_rpd %>% filter(ad < 100) # remove extreme outliers (2 total)
+nmod4 <- lm(not_dup ~ lab_dup, data = ndf_ld)
+
+# this is the same as a parent-dup vs. [parent+dup]/2 plot, ie. error vs mean
+plot(nmod4, which = 1)
+```
+
 ```{r}
 mod3 <- lm(log(not_dup) ~ log(lab_dup), data = df_ld)
 
 # this is the same as a log(parent)-log(dup) vs. [log(parent)+log(dup)]/2 plot, ie. error vs mean
 plot(mod3, which = 1)
 ```
+
+```{r NEW data}
+nmod3 <- lm(log(not_dup) ~ log(lab_dup), data = ndf_ld)
+
+# this is the same as a log(parent)-log(dup) vs. [log(parent)+log(dup)]/2 plot, ie. error vs mean
+plot(nmod3, which = 1)
+```
+
 ```{r}
 summary(mod3)
 ```
+
+```{r}
+summary(nmod3)
+```
+
 Can use $R^2$ here as an effect size estimate based on lab variance, equals 1. Also still will add some flexibility and lower this $R^2$. 
 
 ## Covariates
@@ -596,3 +1056,4 @@ unique(dset3_tds_wide$data_owner)
 count(dset3_tds_wide, data_owner)
 
 ```
+
