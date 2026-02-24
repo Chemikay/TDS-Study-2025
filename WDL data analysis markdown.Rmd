@@ -413,6 +413,7 @@ summary(df4_qc_wide$total_dissolved_solids)
 #29.0    100.0   181.0  937.8   283.8 28600.0   11   
 
 #!these 11 NAs appear to be created from 3 samples that were below RL, and 8 "no sample (N.S.)" records.
+#Quite similar to prior year's data spread
 
 df3_tds %>% 
   count(sample_code) %>% 
