@@ -1,0 +1,135 @@
+```{r include = FALSE}
+library(tidyverse)
+library(pwr)
+```
+
+# Power Analysis
+(**Disclaimer**: a statistician would hate a lot of my phrasing, but it gets the basic point across.)
+
+Regression analysis allows you to make conclusions about the statistical significance of variables *to a specified degree of certainty*. There are five parameters that influence this certainty:
+
+-   sample size (n)
+-   number of predictors being tested (u)
+-   effect size (multiple different measurements, but here $f^2$)
+-   significance level ($\alpha$), which essentially controls Type I error rate (false positives)
+-   power ($1 - \beta$), which essentially controls Type II error rate (false negatives)
+
+For a power calculation in regression, four of these are determined by the user and one is an unknown that falls out of the model. Usually, we set sample size, significance level, effect size, and number of predictors.
+
+Here, however, our unknown is sample size. Therefore, we must set number of predictors, significance level, effect size, and power.
+
+## Significance Level and Power
+
+Significance is usually set at 0.05 (95% confidence, 5% false positive rate) and power at 0.8 (80% power, 20% false negative rate). If you want lower Type I error, decrease $\alpha$; for lower Type II error, increase $1-\beta$.
+
+For this study I would chose:
+
+$\alpha = 0.05$ or $\alpha = 0.01$
+
+$1-\beta = 0.8$ or $1-\beta = 0.9$
+
+Higher $\alpha$'s/lower $1-\beta$'s need more justification.
+
+## Predictors
+
+The number of predictors is determined by the model you use. For the model:
+
+$$log(Y_{TDS}) \sim X_{method} + X_{group} + (1|X_{pair})$$ There are 2 levels of method (new and old) and 7 levels of group; the random effect levels don't matter here. Therefore, the number of predictors is given by
+
+$$u = (\text{number of method variables} -1) + (\text{number of group variables} -1) = 7$$
+
+However, if you think your model might need an interaction term:
+
+$$log(Y_{TDS}) \sim X_{method} + X_{group} + X_{method}X_{group} + (1|X_{pair})$$ Then you need to account for these as well:
+
+$$u = (2-1) +(7-1) + [(2-1)(7-1)]= 13$$
+
+You would include an interaction term if you think the difference between methods depends on which group is doing the study.
+
+## Effect Size
+
+Effect size summarizes how strong the true signal is relative to the variability (noise) in the data; ie. how "messy" your data is. More noise generally reduces standardized effect sizes and makes real effects harder to detect. If you have some preliminary data, you can use it get a sense of the effect size of your study. A common standardize effect size is *Cohen's* $f^2$, where:
+
+$$f^2 = \frac{R^2}{1-R^2}$$
+
+This study uses duplicate measurements as a proxy for preliminary data. To get $R^2$, we need to run a regression between the parent and duplicate samples in a pair. If they're very similar, there will be a high $R^2$, which indicates sample collection/lab processing didn't introduce much error. If they're very different (low $R^2$), then the sample collection process introduces a lot of error.
+
+```{r}
+df_dup <- read_csv('poweranalysis_data.csv', show_col_types = FALSE)
+
+mod1 <- lm(not_dup ~ field_dup, data = df_dup)
+
+summary(mod1)
+```
+
+The $R^2$ is very high. However, this model has issues with heteroscedasticity:
+
+```{r}
+plot(mod1, which = 1)
+```
+
+In a good model, this plot would have all points scattered in a horizontal band around zero. Instead, we see a fan pattern and the red mean line is not always at zero (even at low fitted values). Why this occurs has to do with absolute vs. relative error and the fact that the range of values for TDS data is large, but the quick fix is to log the data so it's all on the same scale:
+
+```{r}
+mod2 <- lm(log(not_dup) ~ log(field_dup), data = df_dup)
+
+summary(mod2)
+```
+
+```{r}
+plot(mod2, which = 1)
+```
+
+Still a bit of weirdness likely due to more samples being collected at lower concentrations (and perhaps measurement precision effects), but see how the red mean line is consistently at zero. This indicates that a log-transform is appropriate. Still, same as before, our $R^2$ is effectively 1 (0.9998).
+
+We could use this value in our $f^2$ equation, but in reality, our study data will likely be more messy than this. Looking at the paired duplicates only tells us how much error to expect assuming the methodology is exactly the same, whereas, in the actual study, the paired points will be collected differently. Therefore, while this gives us a benchmark, it's a good idea to lower the value a bit, such as to 0.8.
+
+## Actual Analysis
+
+With all the values, you can run the actual power test:
+
+```{r}
+pwr_calc_noint <- pwr.f2.test(u = 7, f2 = (0.8/(1-0.8)), sig.level = 0.01, power = 0.9)
+
+print(pwr_calc_noint)
+```
+
+Note that this doesn't give us $n$ directly, but the equation for it is:
+
+$$n = v+1+u$$ (this comes from the equation for denominator degrees of freedom for an F-test that excludes the intercept in $u$).
+
+Therefore, our $n$ is:
+
+```{r}
+cat('n =', pwr_calc_noint$u + 1 + pwr_calc_noint$v)
+```
+
+If interaction terms are accounted for, it's:
+
+```{r}
+pwr_calc_int <- pwr.f2.test(u = 13, f2 = (0.8/(1-0.8)), sig.level = 0.01, power = 0.9)
+
+print(pwr_calc_int)
+```
+
+```{r}
+cat('n =', pwr_calc_int$u + 1 + pwr_calc_int$v)
+```
+
+This is the *total number of samples*. Therefore, each group would collect \~ 4 paired measurements (2 of the old method and 2 of the new method). If these n's seem very small, it's because you're implicitly assuming there will be more error in your data, so you should lower $f^2$ some more. This is valid because you're using your subject matter expertise to help set these levels; for example, you want to account for the error introduced by the fact that groups sample at different locations (which is not explicitly included in the model).
+
+```{r}
+pwr_calc_int <- pwr.f2.test(u = 13, f2 = (0.3/(1-0.3)), sig.level = 0.01, power = 0.9)
+
+cat('n =', pwr_calc_int$u + 1 + pwr_calc_int$v)
+```
+
+So each group would collect \~ 12 paired measurements (6 of old method and 6 of new method).
+
+Why 0.3, when before we were doing 0.8? I chose it because the lower the assumed effect size the more robust to error the study will be, at 12 paired measurements is a reasonable amount for groups to collect (I assume).
+
+## Conclusion
+
+To run a regression with $\alpha = 0.01$ and $1-\beta \approx 0.9$, assuming different methodologies and different sampling sites will introduce some random error (even though we feel confident that within-method error is fairly low, based on duplicates), each group would collect 12 paired samples (if they sample across multiple sites, say, 3 each, then it would be 4 per site).
+
+Note that we only accounted for between-site variability by lowering $f^2$. I think this is valid, since including site as an explicit fixed effect in the model will probably be over-parameterizing, but you can lower $f^2$ some more if you think it'll introduce more error than this. The duplicate data is collected over multiple sites, though, and it has pretty low error, so I think this is fine.
