@@ -878,7 +878,7 @@ Decision made to use absolute difference (AD) as measure of variance rather than
 -   Use linear regression models
 
 ### Question 1
-Will use the following model:
+We will use the following logarithmic model:
 
 $$log(Y_{TDS}) \sim X_{new} + (1|X_{pair})$$ 
 
@@ -889,9 +889,7 @@ have a power law relationship)
 $X_{new}$: if it's the new method or the old method
 
 $1|X_{pair}$: a random effect that ties the two paired old/new values
-together
-
--   can just use $Date$ if they don't overlap (NOTE: if each pair was sampled on a different date, then Date already uniquely specifies the pairs and X_date = X_pair) ##Still don't get this and what to use, need to f/u with Perry (KJR 1/5/26)
+together, (e.g., sample code)
 
 ### Question 2
 
@@ -1006,8 +1004,11 @@ Can use $R^2$ here as an effect size estimate based on lab variance, equals 1. A
 
 ## Covariates
 
--   for Question 1, this is 2 ($X_{new}$ and $X_{pair}$)
+-   for Question 1, this is 2 ($X_{new}$ and $X_{pair}$) + 6 (# field programs -1)
+###Perry looking into this with math for covariates wiht adding new variabel for which field program. 
 
+
+##### remove these now that not going into Q2. 
 -   for Question 2, this is 2 + 2\*(the number of levels in the
     categorical variable-1).
 
@@ -1047,8 +1048,7 @@ samp_size
 
 So I'd need \~50 samples **in total**.
 
-**Note** the model doesn't account for the fact that I want to split
-this across field groups.
+## *because accounting for groups in the model, divide out between them rather than per group##
 
 ```{r}
 unique(dset3_tds_wide$data_owner)
